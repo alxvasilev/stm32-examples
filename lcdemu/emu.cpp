@@ -22,7 +22,7 @@ public:
 //        menu->addValue<nsmenu::NumValue<float, 1, &handler>>("test float", 1234.567);
         menu->addEnum<2, &handler>("test bool(enum)", 1, {"yes", "no"});
 
-        menu->addValue<nsmenu::BoolValue<1, &handler>>("test bool", 10);
+        menu->addValue<nsmenu::BoolValue<1, &handler>>("test bool", 1);
         menu->render();
         lcd->updateScreen();
         startTimer(10);
