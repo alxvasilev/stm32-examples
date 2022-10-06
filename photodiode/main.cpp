@@ -16,7 +16,7 @@ Adc<ADC1> gAdc;
 dma::Tx<I2c<I2C1>> i2c;
 SSD1306<decltype(i2c), 128, 64> display(i2c, 0x3c);
 btn::Buttons<GPIOB, GPIO10, GPIO10> buttons;
-nsusart::Usart<USART1> gUsart;
+nsusart::PrintSink<nsusart::Usart<USART1>> gUsart;
 
 #ifdef NDEBUG
     #define NOLOG
@@ -32,16 +32,11 @@ static void gpio_setup(void)
 {
 	/* Enable GPIO clocks. */
     rcc_periph_clock_enable(RCC_GPIOB);
-    // latch the power pin
-    gpio_set_mode(GPIOB, GPIO_MODE_OUTPUT_50_MHZ,
-        GPIO_CNF_OUTPUT_PUSHPULL, GPIO11);
-    gpio_clear(GPIOB, GPIO11);
-
     /* Setup the LEDs. */
     rcc_periph_clock_enable(RCC_GPIOC);
     gpio_set_mode(GPIOC, GPIO_MODE_OUTPUT_50_MHZ,
         GPIO_CNF_OUTPUT_PUSHPULL, GPIO13);
-
+    // ADC input
     gpio_set_mode(GPIOB, GPIO_MODE_INPUT,
         GPIO_CNF_INPUT_ANALOG, GPIO1);
 }
@@ -190,7 +185,7 @@ public:
     }
     uint16_t detectPeriodStart(const int16_t* buf)
     {
-        enum: uint16_t kLevel = 0;
+        enum: uint16_t { kLevel = 0 };
         // data should be smoothed
         auto prev = buf[0];
         for (uint16_t i = 1; i < W; i++)
@@ -246,37 +241,13 @@ void blinkError(uint8_t code)
     }
 }
 
-void powerOff()
-{
-    gpio_clear(GPIOB, GPIO11);
-    for(;;);
-}
-
-void powerOffWithMessage()
-{
-    // power off
-    display.clear();
-    display.gotoXY(display.width() / 2 - display.charWidthWithSpacing() * 5,
-                   display.height() / 2 - display.font().height / 2);
-    display.puts("POWER OFF");
-    display.updateScreen();
-    msDelay(1000);
-    powerOff();
-}
-
 SampleData<512, 128> buf;
-GenericElapsedTimer<DwtCounter> time;
 
-void buttonCb(uint16_t btn, uint8_t event, void* userp)
+void buttonCb(uint8_t btn, uint8_t event, void* userp)
 {
-    xassert(btn = GPIO10);
-    time.reset();
+    xassert(btn == 10);
     gpio_toggle(GPIOC, GPIO13);
-    if (event == btn::kEventHold)
-    {
-        powerOffWithMessage();
-    }
-    else if (event == btn::kEventPress)
+    if (event == btn::kEventUp)
     {
         if (buf.mSmoothScale)
             buf.disableSmoothScale();
@@ -287,24 +258,16 @@ void buttonCb(uint16_t btn, uint8_t event, void* userp)
 
 int main(void)
 {
-    bool wasResetByWatchdog = (RCC_CSR & RCC_CSR_IWDGRSTF);
-    RCC_CSR |= RCC_CSR_RMVF;
     iwdg_set_period_ms(1000);
     iwdg_start();
     rcc_clock_setup_in_hse_8mhz_out_24mhz();
 
     gpio_setup();
 
-    if (wasResetByWatchdog) {
-        powerOff();
-    }
-
     cm_enable_interrupts();
     dwt_enable_cycle_counter();
-    msDelay(10);
-    gpio_set(GPIOB, GPIO11);
-    msDelay(40);
-
+    gUsart.init(nsusart::kOptEnableTx, 115200, USART_PARITY_EVEN, USART_STOPBITS_1);
+    setPrintSink(&gUsart);
     i2c.init();
 
     if (!display.init()) {
@@ -312,42 +275,6 @@ int main(void)
     }
     display.setFont(Font_5x7);
 
-    ElapsedTimer t;
-    auto ticks = t.ticksElapsed();
-    tprintf("ticks: %\n", ticks);
-
-    /*
-    for (uint16_t x = 0; x < 127; x++)
-    {
-        display.fill(kColorBlack);
-        ElapsedTimer t;
-        display.drawLine(0, 0, x, 60);
-        tprintf("x = %, time = %us\n", x, t.usElapsed());
-
-        display.updateScreen();
-        msDelay(100);
-    }
-
-    for(int w = 1; w < 30; w++)
-    {
-        auto bottom = 63 - w;
-        for(int top = 0; top < bottom; top++)
-        {
-            display.fill(kColorBlack);
-            auto left = 63-w/2;
-            auto right = 63+w/2-1;
-            ElapsedTimer t;
-            display.hLine(left, right, top);
-            display.vLine(top, top+w-1, left);
-            display.vLine(top, top+w-1, right);
-            display.hLine(left, right, top+w);
-            if (top % 4 == 0)
-                tprintf("time: %\n", t.usElapsed());
-            display.updateScreen();
-            //msDelay(100);
-        }
-    }
-*/
     gAdc.init(kOptContConv|kOptScanMode, 3000000);
 
     buf.setTopAndHeight(10, 54);
@@ -361,16 +288,10 @@ int main(void)
     float avgPct = 0.0;
     buttons.init(buttonCb, nullptr);
     buttons.setHoldDelayFor(GPIO10, 2000);
-    time.reset();
-    gUsart.init(nsusart::kOptEnableTx, 38400);
     gAdc.powerOn();
     for (;;)
     {
         iwdg_reset();
-        if (time.msElapsed() > 60000)
-        {
-            powerOffWithMessage();
-        }
         gAdc.dmaRxStart(buf.mBuf, sizeof(buf.mBuf));
         while(gAdc.dmaRxBusy())
         {
@@ -440,7 +361,6 @@ int main(void)
         }
         buttons.poll();
         display.updateScreen();
-        gUsart.sendBlocking("opa\n");
     }
 /*
     GPIOC_ODR = 0;
