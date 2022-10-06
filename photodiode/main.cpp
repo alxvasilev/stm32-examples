@@ -232,10 +232,10 @@ void blinkError(uint8_t code)
     {
         for (int i=0; i < code; i++)
         {
-            gpio_clear(GPIOC, GPIO13);
-            msDelay(200);
             gpio_set(GPIOC, GPIO13);
-            msDelay(200);
+            msDelay(500);
+            gpio_clear(GPIOC, GPIO13);
+            msDelay(500);
         }
         msDelay(1000);
     }
@@ -263,15 +263,16 @@ int main(void)
     rcc_clock_setup_in_hse_8mhz_out_24mhz();
 
     gpio_setup();
+    gpio_clear(GPIOC, GPIO13);
 
     cm_enable_interrupts();
     dwt_enable_cycle_counter();
     gUsart.init(nsusart::kOptEnableTx, 115200, USART_PARITY_EVEN, USART_STOPBITS_1);
     setPrintSink(&gUsart);
     i2c.init();
-
+    msDelay(100);
     if (!display.init()) {
-        blinkError(2);
+        blinkError(4);
     }
     display.setFont(Font_5x7);
 
@@ -289,6 +290,8 @@ int main(void)
     buttons.init(buttonCb, nullptr);
     buttons.setHoldDelayFor(GPIO10, 2000);
     gAdc.powerOn();
+    gpio_set(GPIOC, GPIO13);
+
     for (;;)
     {
         iwdg_reset();
@@ -335,18 +338,18 @@ int main(void)
             }
         }
         enum: uint16_t { kMaxVal = 2350 };
-        if (buf.mMax > kMaxVal)
-        {
-            tsnprintf(msg, 63, "= Oversaturated =");
-        }
-        else
-        {
-            uint8_t sig = (buf.mMax*127 / kMaxVal);
-            display.hLine(0, sig, 9);
+        if (buf.mMax > kMaxVal) {
+            display.hLine(0, 127, 9);
+            tsnprintf(msg, 63, "OVR %Hz % B100%", fmtInt(avgSignalFreq+0.5, 0, 4), buf.mSmoothScale ? "L":" ");
 
+        }
+        else {
+            uint8_t level = (buf.mMax * 127 / kMaxVal);
+            display.hLine(0, level, 9);
             tsnprintf(msg, 63, "%% %Hz % B100%", fmtInt(avgPct+0.5, 0, 2), '%',
                 fmtInt(avgSignalFreq+0.5, 0, 4), buf.mSmoothScale ? "L":" ");
         }
+
         display.gotoXY(0, 0);
         display.puts(msg);
         buf.smooth(4);
